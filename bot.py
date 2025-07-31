@@ -7,45 +7,16 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.storage.redis import DefaultKeyBuilder, RedisStorage
 from aiogram.types import BotCommand
 
-from infrastructure.database.setup import create_engine, create_session_pool
 from tgbot.config import Config, load_config
 from tgbot.handlers import routers_list
 from tgbot.middlewares.config import ConfigMiddleware
-from tgbot.middlewares.database import DatabaseMiddleware
 from tgbot.middlewares.message_pairing import MessagePairingMiddleware
 from tgbot.services.logger import setup_logging
-from tgbot.services.scheduler import remove_old_topics, scheduler
+from tgbot.services.scheduler import scheduler
 
 bot_config = load_config(".env")
 
 logger = logging.getLogger(__name__)
-
-
-# async def on_startup(bot: Bot):
-#     if bot_config.tg_bot.activity_status:
-#         timeout_msg = f"Да ({bot_config.tg_bot.activity_warn_minutes}/{bot_config.tg_bot.activity_close_minutes} минут)"
-#     else:
-#         timeout_msg = "Нет"
-#
-#     if bot_config.tg_bot.remove_old_questions:
-#         remove_topics_msg = (
-#             f"Да (старше {bot_config.tg_bot.remove_old_questions_days} дней)"
-#         )
-#     else:
-#         remove_topics_msg = "Нет"
-#
-#     await bot.send_message(
-#         chat_id=bot_config.tg_bot.ntp_forum_id,
-#         text=f"""<b>🚀 Запуск</b>
-#
-# Вопросник запущен со следующими параметрами:
-# <b>- Направление:</b> {bot_config.tg_bot.division}
-# <b>- Запрашивать регламент:</b> {"Да" if bot_config.tg_bot.ask_clever_link else "Нет"}
-# <b>- Закрывать по таймауту:</b> {timeout_msg}
-# <b>- Удалять старые вопросы:</b> {remove_topics_msg}
-#
-# <blockquote>База данных: {"Основная" if bot_config.db.main_db == "STPMain" else "Запасная"}</blockquote>""",
-#     )
 
 
 def register_global_middlewares(
@@ -68,12 +39,6 @@ def register_global_middlewares(
     """
     middleware_types = [
         ConfigMiddleware(config),
-        DatabaseMiddleware(
-            config=config,
-            bot=bot,
-            main_session_pool=main_session_pool,
-            questioner_session_pool=questioner_session_pool,
-        ),
     ]
 
     for middleware_type in middleware_types:
@@ -128,35 +93,13 @@ async def main():
 
     dp = Dispatcher(storage=storage)
 
-    # Create engines for different databases
-    stp_db_engine = create_engine(bot_config.db, db_name=bot_config.db.main_db)
-    questioner_db_engine = create_engine(
-        bot_config.db, db_name=bot_config.db.questioner_db
-    )
-
-    stp_db = create_session_pool(stp_db_engine)
-    questioner_db = create_session_pool(questioner_db_engine)
-
-    # Store session pools in dispatcher
-    dp["stp_db"] = stp_db
-    dp["questioner_db"] = questioner_db
-
     dp.include_routers(*routers_list)
 
-    register_global_middlewares(dp, bot_config, bot, stp_db, questioner_db)
+    register_global_middlewares(dp, bot_config, bot)
 
-    if bot_config.tg_bot.remove_old_questions:
-        scheduler.add_job(
-            remove_old_topics, "interval", hours=12, args=[bot, questioner_db]
-        )
-    # await remove_old_topics(bot, questioner_db)
     scheduler.start()
 
-    # await on_startup(bot)
-    try:
-        await dp.start_polling(bot)
-    finally:
-        await stp_db_engine.dispose()
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
